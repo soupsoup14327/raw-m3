@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Raw M3 Palette</title>
+  <title>RAW color pallete</title>
   <style>
     :root { --bg:#121214; --surface:#1c1c1f; --border:#2a2a2e; --text:#ececf1; --muted:#9898a4; --accent:#a78bfa; }
     * { box-sizing: border-box; }
@@ -31,13 +31,13 @@
     .sw { width:56px; text-align:center; }
     .sw-chip { height:44px; border-radius:8px; border:1px solid rgba(255,255,255,.12); margin-bottom:4px; }
     .sw-tone { font-size:.65rem; color:var(--muted); }
-    .sw-hex { font-size:.6rem; font-family:ui-monospace,monospace; word-break:break-all; color:var(--muted); }
+    .sw-hex { font-size:.6rem; font-family:ui-monospace,monospace; word-break:break-all; color:var(--muted); cursor:pointer; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Raw M3 Palette</h1>
-    <p class="sub">Статический сайт для GitHub Pages. Тона всегда в диапазоне 0-100.</p>
+    <h1>RAW color pallete</h1>
+    <p class="sub">Генерация тона от 0 до 100</p>
     <div class="panel">
       <div class="row">
         <div>
@@ -54,15 +54,15 @@
         <div class="field-mode">
           <label>Режим</label>
           <select id="mode">
-            <option value="tonal">Одна шкала (TonalPalette)</option>
-            <option value="theme" selected>M3: primary + surface variants</option>
+            <option value="tonal">Color</option>
+            <option value="theme" selected>Color + 2 NeutralVariant</option>
           </select>
         </div>
       </div>
       <div style="margin-top:1rem">
         <button type="button" class="btn" id="btnExport">Выгрузить JSON для Figma</button>
       </div>
-      <p class="hint">В режиме темы показываются только primary, neutral, neutralVariant.</p>
+      <p class="hint">В режиме темы показываются только Color, Neutral, NeutralVariant.</p>
       <div class="err" id="err" hidden></div>
     </div>
     <div id="preview"></div>
@@ -125,7 +125,7 @@
       for (const { tone, hex } of samples) {
         const node = document.createElement('div');
         node.className = 'sw';
-        node.innerHTML = `<div class="sw-chip" style="background:${hex}"></div><div class="sw-tone">${tone}</div><div class="sw-hex">${hex}</div>`;
+        node.innerHTML = `<div class="sw-chip" style="background:${hex}"></div><div class="sw-tone">${tone}</div><div class="sw-hex" title="Нажми, чтобы скопировать">${hex}</div>`;
         row.appendChild(node);
       }
       root.appendChild(row);
@@ -187,12 +187,17 @@
         preview.innerHTML = '';
         if (mode === 'tonal') {
           const tonal = tonesFromPalette(TonalPalette.fromInt(argbFromHex(hex)), steps);
-          preview.appendChild(swatchBlock('TonalPalette (seed)', tonal));
+          preview.appendChild(swatchBlock('Color', tonal));
           lastExportPayload = buildExport(hex, mode, { tonal });
         } else {
           const theme = buildTheme(hex, steps);
+          const displayNames = {
+            primary: 'Color',
+            neutral: 'Neutral',
+            neutralVariant: 'NeutralVariant',
+          };
           for (const key of ['primary', 'neutral', 'neutralVariant']) {
-            preview.appendChild(swatchBlock(key, theme[key]));
+            preview.appendChild(swatchBlock(displayNames[key], theme[key]));
           }
           lastExportPayload = buildExport(hex, mode, theme);
         }
@@ -206,6 +211,19 @@
     const schedule = () => { clearTimeout(debounce); debounce = setTimeout(render, 80); };
     pick.addEventListener('input', () => { hexInput.value = pick.value.toUpperCase(); schedule(); });
     hexInput.addEventListener('input', () => { const h = normalizeHex(hexInput.value); if (isValidHex(h)) pick.value = h; schedule(); });
+    preview.addEventListener('click', async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (!target.classList.contains('sw-hex')) return;
+      const value = target.textContent?.trim();
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        target.title = `Скопировано: ${value}`;
+      } catch {
+        target.title = 'Не удалось скопировать';
+      }
+    });
     countEl.addEventListener('input', schedule);
     modeEl.addEventListener('change', schedule);
     btnExport.addEventListener('click', () => {
