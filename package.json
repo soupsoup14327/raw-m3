@@ -1,0 +1,18 @@
+{
+  "name": "material-tonal-api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/palette.js",
+  "scripts": {
+    "start": "node server.js",
+    "api": "node server.js",
+    "cli": "node cli.js"
+  },
+  "type": "module",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@material/material-color-utilities": "^0.4.0"
+  }
+}
