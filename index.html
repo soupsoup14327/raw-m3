@@ -88,12 +88,19 @@
     };
     const isValidHex = (v) => /^#[0-9a-fA-F]{6}$/.test(v);
 
+    /**
+     * Метки 0..100 без пропусков (например при N=100 round давал 49 и 51 без 50).
+     * Последний свотч всегда 100, остальные: floor(i * 100 / (n - 1)).
+     */
     const toneSteps = (count) => {
       const n = Math.max(1, Math.min(100, Math.round(Number(count)) || 1));
       if (n === 1) return [50];
       const arr = [];
-      for (let i = 0; i < n; i += 1) arr.push(Math.round((i * 100) / (n - 1)));
-      return [...new Set(arr)].sort((a, b) => a - b);
+      for (let i = 0; i < n; i += 1) {
+        if (i === n - 1) arr.push(100);
+        else arr.push(Math.floor((i * 100) / (n - 1)));
+      }
+      return arr;
     };
 
     const tonesFromPalette = (palette, steps) => steps.map((tone) => ({ tone, hex: hexFromArgb(palette.tone(tone)) }));
