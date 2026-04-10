@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Raw M3 Palette</title>
+  <style>
+    :root { --bg:#121214; --surface:#1c1c1f; --border:#2a2a2e; --text:#ececf1; --muted:#9898a4; --accent:#a78bfa; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; font-family:"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.5; }
+    .wrap { max-width: 980px; margin:0 auto; padding:1.5rem 1.25rem 3rem; }
+    h1 { margin:0 0 .25rem; font-size:1.35rem; font-weight:600; }
+    .sub { margin:0 0 1.2rem; color:var(--muted); font-size:.92rem; }
+    .panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1.1rem; margin-bottom:1rem; }
+    .row { display:flex; flex-wrap:wrap; gap:1rem; align-items:flex-end; }
+    label { display:block; font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-bottom:.35rem; }
+    input[type="text"], input[type="number"], select { background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); padding:.5rem .65rem; font-size:.95rem; }
+    input[type="color"] { width:52px; height:40px; padding:2px; border:1px solid var(--border); border-radius:8px; background:var(--bg); cursor:pointer; }
+    .field-hex { flex:1 1 140px; min-width:130px; }
+    .field-hex input { width:100%; }
+    .field-count { width:100px; }
+    .field-count input { width:100%; }
+    .field-mode { flex:1 1 210px; }
+    .field-mode select { width:100%; }
+    .btn { border:1px solid var(--accent); background:rgba(167,139,250,.12); color:var(--text); padding:.55rem 1rem; border-radius:8px; font-size:.9rem; cursor:pointer; }
+    .btn:hover { background:rgba(167,139,250,.22); }
+    .hint { margin-top:.75rem; color:var(--muted); font-size:.82rem; }
+    .err { color:#f87171; font-size:.86rem; margin-top:.5rem; }
+    .palette-title { margin:1rem 0 .5rem; color:var(--muted); font-size:.86rem; font-weight:600; text-transform:capitalize; }
+    .swatches { display:flex; flex-wrap:wrap; gap:6px; }
+    .sw { width:56px; text-align:center; }
+    .sw-chip { height:44px; border-radius:8px; border:1px solid rgba(255,255,255,.12); margin-bottom:4px; }
+    .sw-tone { font-size:.65rem; color:var(--muted); }
+    .sw-hex { font-size:.6rem; font-family:ui-monospace,monospace; word-break:break-all; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Raw M3 Palette</h1>
+    <p class="sub">Статический сайт для GitHub Pages. Тона всегда в диапазоне 0-100.</p>
+    <div class="panel">
+      <div class="row">
+        <div>
+          <label>Цвет</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="color" id="pick" value="#6750a4" />
+            <div class="field-hex"><input type="text" id="hex" value="#6750A4" placeholder="#RRGGBB" spellcheck="false" /></div>
+          </div>
+        </div>
+        <div class="field-count">
+          <label>Свотчей</label>
+          <input type="number" id="count" min="1" max="100" value="11" />
+        </div>
+        <div class="field-mode">
+          <label>Режим</label>
+          <select id="mode">
+            <option value="tonal">Одна шкала (TonalPalette)</option>
+            <option value="theme" selected>M3: primary + surface variants</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:1rem">
+        <button type="button" class="btn" id="btnExport">Выгрузить JSON для Figma</button>
+      </div>
+      <p class="hint">В режиме темы показываются только primary, neutral, neutralVariant.</p>
+      <div class="err" id="err" hidden></div>
+    </div>
+    <div id="preview"></div>
+  </div>
+
+  <script type="module">
+    import { CorePalette, TonalPalette, argbFromHex, hexFromArgb } from "https://esm.sh/@material/material-color-utilities@0.4.0";
+
+    const pick = document.getElementById('pick');
+    const hexInput = document.getElementById('hex');
+    const countEl = document.getElementById('count');
+    const modeEl = document.getElementById('mode');
+    const preview = document.getElementById('preview');
+    const err = document.getElementById('err');
+    const btnExport = document.getElementById('btnExport');
+    let lastExportPayload = null;
+    let debounce;
+
+    const normalizeHex = (v) => {
+      let s = String(v || '').trim();
+      if (!s.startsWith('#')) s = `#${s}`;
+      if (/^#[0-9a-fA-F]{3}$/.test(s)) s = `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`;
+      return s.toUpperCase();
+    };
+    const isValidHex = (v) => /^#[0-9a-fA-F]{6}$/.test(v);
+
+    const toneSteps = (count) => {
+      const n = Math.max(1, Math.min(100, Math.round(Number(count)) || 1));
+      if (n === 1) return [50];
+      const arr = [];
+      for (let i = 0; i < n; i += 1) arr.push(Math.round((i * 100) / (n - 1)));
+      return [...new Set(arr)].sort((a, b) => a - b);
+    };
+
+    const hexToFigmaRgb = (hex) => {
+      const h = hex.replace('#', '');
+      return {
+        r: parseInt(h.slice(0, 2), 16) / 255,
+        g: parseInt(h.slice(2, 4), 16) / 255,
+        b: parseInt(h.slice(4, 6), 16) / 255,
+        a: 1,
+      };
+    };
+
+    const tonesFromPalette = (palette, steps) => steps.map((tone) => ({ tone, hex: hexFromArgb(palette.tone(tone)) }));
+    const buildTheme = (hex, steps) => {
+      const core = CorePalette.of(argbFromHex(hex));
+      return {
+        primary: tonesFromPalette(core.a1, steps),
+        neutral: tonesFromPalette(core.n1, steps),
+        neutralVariant: tonesFromPalette(core.n2, steps),
+      };
+    };
+
+    const swatchBlock = (title, samples) => {
+      const root = document.createElement('div');
+      root.innerHTML = `<div class="palette-title">${title}</div>`;
+      const row = document.createElement('div');
+      row.className = 'swatches';
+      for (const { tone, hex } of samples) {
+        const node = document.createElement('div');
+        node.className = 'sw';
+        node.innerHTML = `<div class="sw-chip" style="background:${hex}"></div><div class="sw-tone">${tone}</div><div class="sw-hex">${hex}</div>`;
+        row.appendChild(node);
+      }
+      root.appendChild(row);
+      return root;
+    };
+
+    function buildExport(sourceHex, mode, entries) {
+      const generated = new Date().toISOString();
+      const steps = toneSteps(countEl.value);
+      if (mode === 'tonal') {
+        return {
+          format: 'material-tonal-figma',
+          version: 1,
+          generated,
+          source: { hex: sourceHex },
+          mode: 'tonal',
+          toneSteps: steps,
+          styles: entries.tonal.map(({ tone, hex }) => ({
+            name: `Tonal/${tone}`,
+            tone,
+            hex,
+            figmaColor: hexToFigmaRgb(hex),
+          })),
+        };
+      }
+      const collections = Object.entries(entries).map(([palette, samples]) => ({
+        palette,
+        styles: samples.map(({ tone, hex }) => ({
+          name: `${palette.charAt(0).toUpperCase() + palette.slice(1)}/${tone}`,
+          tone,
+          hex,
+          figmaColor: hexToFigmaRgb(hex),
+        })),
+      }));
+      return {
+        format: 'material-tonal-figma',
+        version: 1,
+        generated,
+        source: { hex: sourceHex },
+        mode: 'theme',
+        toneSteps: steps,
+        collections,
+      };
+    }
+
+    function render() {
+      err.hidden = true;
+      const hex = normalizeHex(hexInput.value);
+      if (!isValidHex(hex)) {
+        preview.innerHTML = '';
+        err.textContent = 'Некорректный HEX. Нужен формат #RRGGBB.';
+        err.hidden = false;
+        lastExportPayload = null;
+        return;
+      }
+      const steps = toneSteps(countEl.value);
+      const mode = modeEl.value;
+      try {
+        preview.innerHTML = '';
+        if (mode === 'tonal') {
+          const tonal = tonesFromPalette(TonalPalette.fromInt(argbFromHex(hex)), steps);
+          preview.appendChild(swatchBlock('TonalPalette (seed)', tonal));
+          lastExportPayload = buildExport(hex, mode, { tonal });
+        } else {
+          const theme = buildTheme(hex, steps);
+          for (const key of ['primary', 'neutral', 'neutralVariant']) {
+            preview.appendChild(swatchBlock(key, theme[key]));
+          }
+          lastExportPayload = buildExport(hex, mode, theme);
+        }
+      } catch (e) {
+        preview.innerHTML = '';
+        err.textContent = String(e?.message || e);
+        err.hidden = false;
+      }
+    }
+
+    const schedule = () => { clearTimeout(debounce); debounce = setTimeout(render, 80); };
+    pick.addEventListener('input', () => { hexInput.value = pick.value.toUpperCase(); schedule(); });
+    hexInput.addEventListener('input', () => { const h = normalizeHex(hexInput.value); if (isValidHex(h)) pick.value = h; schedule(); });
+    countEl.addEventListener('input', schedule);
+    modeEl.addEventListener('change', schedule);
+    btnExport.addEventListener('click', () => {
+      if (!lastExportPayload) return;
+      const fileHex = normalizeHex(hexInput.value).replace('#', '');
+      const blob = new Blob([JSON.stringify(lastExportPayload, null, 2)], { type: 'application/json;charset=utf-8' });
+      const a = document.createElement('a');
+      a.download = `figma-material-tonal-${fileHex}.json`;
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    render();
+  </script>
+</body>
+</html>
