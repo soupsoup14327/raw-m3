@@ -61,7 +61,7 @@
           </select>
         </div>
       </div>
-      <p class="hint">У каждой группы своя кнопка JSON. Экспорт: GroupName - 1, GroupName - 2, ...</p>
+      <p class="hint">JSON для Figma Tokens / Tokens Studio: <code>colors → имя группы → 1…N</code> (<code>value</code> + <code>type: color</code>).</p>
       <div class="err" id="err" hidden></div>
     </div>
     <div id="preview"></div>
@@ -162,13 +162,23 @@
       };
     };
 
-    function makeCleanPaletteJson(paletteName, samples) {
+    /**
+     * Формат как в Figma Tokens: вложенная группа + стили 1…N (не плоский массив).
+     * Импорт: Tokens Studio → Import → JSON (или плагин Figma Tokens).
+     */
+    function makeFigmaTokensJson(groupName, samples) {
+      const g = String(groupName || 'Palette').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim() || 'Palette';
+      const inner = {};
+      samples.forEach((s, idx) => {
+        inner[String(idx + 1)] = {
+          value: s.hex,
+          type: 'color',
+        };
+      });
       return {
-        palette: paletteName,
-        colors: samples.map(({ hex }, idx) => ({
-          name: `${paletteName} - ${idx + 1}`,
-          value: hex,
-        })),
+        colors: {
+          [g]: inner,
+        },
       };
     }
 
@@ -208,7 +218,7 @@
       const pack = groupExports.get(groupKey);
       if (!pack) return;
       const file = `${safeFileName(pack.groupName)}.json`;
-      const content = makeCleanPaletteJson(pack.groupName, pack.samples);
+      const content = makeFigmaTokensJson(pack.groupName, pack.samples);
       downloadJson(file, content);
     }
 
