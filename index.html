@@ -34,6 +34,17 @@
     .sw-chip { height:44px; border-radius:8px; border:1px solid rgba(255,255,255,.12); margin-bottom:4px; }
     .sw-tone { font-size:.65rem; color:var(--muted); }
     .sw-hex { font-size:.6rem; font-family:ui-monospace,monospace; word-break:break-all; color:var(--muted); cursor:pointer; }
+    .tabs { display:flex; gap:.35rem; margin-bottom:.85rem; flex-wrap:wrap; }
+    .tab {
+      border:1px solid var(--border); background:transparent; color:var(--muted);
+      padding:.4rem .75rem; border-radius:8px; font-size:.82rem; cursor:pointer; font-family:inherit;
+    }
+    .tab:hover { color:var(--text); border-color:var(--muted); }
+    .tab.active { border-color:var(--accent); color:var(--text); background:rgba(167,139,250,.1); }
+    .tab-panel { margin-bottom:.75rem; }
+    .img-preview { max-height:120px; max-width:100%; border-radius:8px; border:1px solid var(--border); margin-top:.5rem; display:none; }
+    .img-preview.visible { display:block; }
+    input[type="file"] { font-size:.85rem; color:var(--muted); max-width:100%; }
   </style>
 </head>
 <body>
@@ -41,14 +52,28 @@
     <h1>RAW color pallete</h1>
     <p class="sub">Генерация тона 0–100: OKLCH + якорь seed, шаги по степени (Stevens‑подобно).</p>
     <div class="panel">
-      <div class="row">
-        <div>
-          <label>Цвет</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="color" id="pick" value="#6750a4" />
-            <div class="field-hex"><input type="text" id="hex" value="#6750A4" placeholder="#RRGGBB" spellcheck="false" /></div>
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab active" id="tabColor" role="tab" aria-selected="true">Цвет</button>
+        <button type="button" class="tab" id="tabImage" role="tab" aria-selected="false">Картинка</button>
+      </div>
+      <div id="panelColor" class="tab-panel" role="tabpanel">
+        <div class="row">
+          <div>
+            <label>Цвет</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="color" id="pick" value="#6750a4" />
+              <div class="field-hex"><input type="text" id="hex" value="#6750A4" placeholder="#RRGGBB" spellcheck="false" /></div>
+            </div>
           </div>
         </div>
+      </div>
+      <div id="panelImage" class="tab-panel" hidden role="tabpanel">
+        <label>Изображение</label>
+        <input type="file" id="fileImg" accept="image/*" />
+        <img id="imgPreview" class="img-preview" alt="Превью" />
+        <p class="hint" style="margin-top:.5rem">Seed берётся алгоритмом Material (квантизация + score), как Dynamic Color.</p>
+      </div>
+      <div class="row" style="margin-top:.75rem">
         <div class="field-count">
           <label>Свотчей</label>
           <input type="number" id="count" min="1" max="100" value="11" />
@@ -77,8 +102,90 @@
     const modeEl = document.getElementById('mode');
     const preview = document.getElementById('preview');
     const err = document.getElementById('err');
+    const tabColor = document.getElementById('tabColor');
+    const tabImage = document.getElementById('tabImage');
+    const panelColor = document.getElementById('panelColor');
+    const panelImage = document.getElementById('panelImage');
+    const fileImg = document.getElementById('fileImg');
+    const imgPreview = document.getElementById('imgPreview');
     const groupExports = new Map();
     let debounce;
+    let imageObjectUrl = null;
+
+    function setTab(which) {
+      const isColor = which === 'color';
+      tabColor.classList.toggle('active', isColor);
+      tabImage.classList.toggle('active', !isColor);
+      tabColor.setAttribute('aria-selected', String(isColor));
+      tabImage.setAttribute('aria-selected', String(!isColor));
+      panelColor.hidden = !isColor;
+      panelImage.hidden = isColor;
+    }
+    tabColor.addEventListener('click', () => setTab('color'));
+    tabImage.addEventListener('click', () => setTab('image'));
+
+    function fallbackAverageHex(img) {
+      const c = document.createElement('canvas');
+      const max = 96;
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      const scale = Math.min(1, max / Math.max(w, h));
+      c.width = Math.max(1, Math.round(w * scale));
+      c.height = Math.max(1, Math.round(h * scale));
+      const ctx = c.getContext('2d');
+      if (!ctx) return '#808080';
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 8) continue;
+        r += d[i];
+        g += d[i + 1];
+        b += d[i + 2];
+        n += 1;
+      }
+      if (!n) return '#808080';
+      const toHex = (x) => Math.min(255, Math.round(x / n)).toString(16).padStart(2, '0');
+      return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+    }
+
+    fileImg.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      err.hidden = true;
+      if (imageObjectUrl) URL.revokeObjectURL(imageObjectUrl);
+      imageObjectUrl = URL.createObjectURL(file);
+      imgPreview.src = imageObjectUrl;
+      imgPreview.classList.add('visible');
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = async () => {
+        try {
+          let hexOut;
+          try {
+            const mod = await import('https://esm.sh/@material/material-color-utilities@0.4.0/utils/image_utils.js');
+            const argb = await mod.sourceColorFromImage(img);
+            hexOut = hexFromArgb(argb).toUpperCase();
+          } catch {
+            hexOut = fallbackAverageHex(img);
+          }
+          hexInput.value = hexOut;
+          pick.value = hexOut;
+          schedule();
+        } catch (ex) {
+          err.textContent = String(ex?.message || ex);
+          err.hidden = false;
+        }
+      };
+      img.onerror = () => {
+        err.textContent = 'Не удалось прочитать файл изображения.';
+        err.hidden = false;
+      };
+      img.src = imageObjectUrl;
+    });
 
     const normalizeHex = (v) => {
       let s = String(v || '').trim();
