@@ -24,15 +24,16 @@
     .field-mode select { width:100%; }
     .btn { border:1px solid var(--accent); background:rgba(167,139,250,.12); color:var(--text); padding:.55rem 1rem; border-radius:8px; font-size:.9rem; cursor:pointer; }
     .btn:hover { background:rgba(167,139,250,.22); }
+    .btn-small { padding:.3rem .55rem; font-size:.75rem; }
     .hint { margin-top:.75rem; color:var(--muted); font-size:.82rem; }
     .err { color:#f87171; font-size:.86rem; margin-top:.5rem; }
-    .palette-title { margin:1rem 0 .5rem; color:var(--muted); font-size:.86rem; font-weight:600; text-transform:capitalize; }
+    .palette-head { margin:1rem 0 .5rem; display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
+    .palette-title { color:var(--muted); font-size:.86rem; font-weight:600; text-transform:capitalize; }
     .swatches { display:flex; flex-wrap:wrap; gap:6px; }
     .sw { width:76px; text-align:center; }
     .sw-chip { height:44px; border-radius:8px; border:1px solid rgba(255,255,255,.12); margin-bottom:4px; }
     .sw-tone { font-size:.65rem; color:var(--muted); }
     .sw-hex { font-size:.6rem; font-family:ui-monospace,monospace; word-break:break-all; color:var(--muted); cursor:pointer; }
-    .sw-name { font-size:.58rem; color:var(--muted); line-height:1.2; margin-top:2px; min-height:1.2em; }
   </style>
 </head>
 <body>
@@ -60,10 +61,7 @@
           </select>
         </div>
       </div>
-      <div style="margin-top:1rem">
-        <button type="button" class="btn" id="btnExport">Выгрузить JSON для Figma</button>
-      </div>
-      <p class="hint">В режиме темы показываются только Color, Neutral, NeutralVariant.</p>
+      <p class="hint">У каждой группы своя кнопка JSON. Экспорт: GroupName - 1, GroupName - 2, ...</p>
       <div class="err" id="err" hidden></div>
     </div>
     <div id="preview"></div>
@@ -78,8 +76,7 @@
     const modeEl = document.getElementById('mode');
     const preview = document.getElementById('preview');
     const err = document.getElementById('err');
-    const btnExport = document.getElementById('btnExport');
-    let lastExportPayload = null;
+    const groupExports = new Map();
     let debounce;
 
     const normalizeHex = (v) => {
@@ -96,16 +93,6 @@
       const arr = [];
       for (let i = 0; i < n; i += 1) arr.push(Math.round((i * 100) / (n - 1)));
       return [...new Set(arr)].sort((a, b) => a - b);
-    };
-
-    const hexToFigmaRgb = (hex) => {
-      const h = hex.replace('#', '');
-      return {
-        r: parseInt(h.slice(0, 2), 16) / 255,
-        g: parseInt(h.slice(2, 4), 16) / 255,
-        b: parseInt(h.slice(4, 6), 16) / 255,
-        a: 1,
-      };
     };
 
     const tonesFromPalette = (palette, steps) => steps.map((tone) => ({ tone, hex: hexFromArgb(palette.tone(tone)) }));
@@ -136,25 +123,14 @@
     function makeCleanPaletteJson(paletteName, samples) {
       return {
         palette: paletteName,
-        colors: samples.map(({ hex, name }) => ({
-          name: name || hex,
+        colors: samples.map(({ hex }, idx) => ({
+          name: `${paletteName} - ${idx + 1}`,
           value: hex,
         })),
       };
     }
 
-    function buildExport(mode, entries) {
-      if (mode === 'tonal') {
-        return [{ file: 'Tonal.json', content: makeCleanPaletteJson('Tonal', entries.tonal) }];
-      }
-      return [
-        { file: 'Color.json', content: makeCleanPaletteJson('Color', entries.primary) },
-        { file: 'Neutral.json', content: makeCleanPaletteJson('Neutral', entries.neutral) },
-        { file: 'NeutralVariant.json', content: makeCleanPaletteJson('NeutralVariant', entries.neutralVariant) },
-      ];
-    }
-
-    async function fetchColorNames(hexList) {
+    async function fetchGroupNames(hexList) {
       const uniq = [...new Set(hexList.map((h) => h.replace('#', '').toUpperCase()))];
       if (!uniq.length) return new Map();
       try {
@@ -173,36 +149,82 @@
       }
     }
 
-    async function withNames(samples) {
-      const names = await fetchColorNames(samples.map((s) => s.hex));
-      return samples.map((s) => ({ ...s, name: names.get(s.hex.toUpperCase()) || '' }));
+    function safeFileName(name) {
+      return String(name || 'Palette').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim() || 'Palette';
+    }
+
+    function downloadJson(file, content) {
+      const blob = new Blob([JSON.stringify(content, null, 2)], { type: 'application/json;charset=utf-8' });
+      const a = document.createElement('a');
+      a.download = file;
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function exportGroup(groupKey) {
+      const pack = groupExports.get(groupKey);
+      if (!pack) return;
+      const file = `${safeFileName(pack.groupName)}.json`;
+      const content = makeCleanPaletteJson(pack.groupName, pack.samples);
+      downloadJson(file, content);
+    }
+
+    function swatchBlock(title, groupKey, samples, groupName) {
+      const root = document.createElement('div');
+      const head = document.createElement('div');
+      head.className = 'palette-head';
+      const titleNode = document.createElement('div');
+      titleNode.className = 'palette-title';
+      titleNode.textContent = title;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-small';
+      button.textContent = `JSON: ${groupName}`;
+      button.addEventListener('click', () => exportGroup(groupKey));
+      head.appendChild(titleNode);
+      head.appendChild(button);
+      root.appendChild(head);
+
+      const row = document.createElement('div');
+      row.className = 'swatches';
+      for (const { tone, hex } of samples) {
+        const node = document.createElement('div');
+        node.className = 'sw';
+        node.innerHTML = `<div class="sw-chip" style="background:${hex}"></div><div class="sw-tone">${tone}</div><div class="sw-hex" title="Нажми, чтобы скопировать">${hex}</div>`;
+        row.appendChild(node);
+      }
+      root.appendChild(row);
+      return root;
     }
 
     async function render() {
       err.hidden = true;
+      groupExports.clear();
       const hex = normalizeHex(hexInput.value);
       if (!isValidHex(hex)) {
         preview.innerHTML = '';
         err.textContent = 'Некорректный HEX. Нужен формат #RRGGBB.';
         err.hidden = false;
-        lastExportPayload = null;
         return;
       }
       const steps = toneSteps(countEl.value);
       const mode = modeEl.value;
       try {
         preview.innerHTML = '';
+        const namesApi = await fetchGroupNames([hex]);
+        const seedName = namesApi.get(hex.toUpperCase()) || 'Palette';
         if (mode === 'tonal') {
-          const tonalRaw = tonesFromPalette(TonalPalette.fromInt(argbFromHex(hex)), steps);
-          const tonal = await withNames(tonalRaw);
-          preview.appendChild(swatchBlock('Color', tonal));
-          lastExportPayload = buildExport(mode, { tonal });
+          const tonal = tonesFromPalette(TonalPalette.fromInt(argbFromHex(hex)), steps);
+          const groupName = seedName;
+          groupExports.set('tonal', { groupName, samples: tonal });
+          preview.appendChild(swatchBlock('Color', 'tonal', tonal, groupName));
         } else {
-          const themeRaw = buildTheme(hex, steps);
-          const theme = {
-            primary: await withNames(themeRaw.primary),
-            neutral: await withNames(themeRaw.neutral),
-            neutralVariant: await withNames(themeRaw.neutralVariant),
+          const theme = buildTheme(hex, steps);
+          const groupNames = {
+            primary: seedName,
+            neutral: `${seedName} Neutral`,
+            neutralVariant: `${seedName} NeutralVariant`,
           };
           const displayNames = {
             primary: 'Color',
@@ -210,9 +232,9 @@
             neutralVariant: 'NeutralVariant',
           };
           for (const key of ['primary', 'neutral', 'neutralVariant']) {
-            preview.appendChild(swatchBlock(displayNames[key], theme[key]));
+            groupExports.set(key, { groupName: groupNames[key], samples: theme[key] });
+            preview.appendChild(swatchBlock(displayNames[key], key, theme[key], groupNames[key]));
           }
-          lastExportPayload = buildExport(mode, theme);
         }
       } catch (e) {
         preview.innerHTML = '';
@@ -239,18 +261,6 @@
     });
     countEl.addEventListener('input', schedule);
     modeEl.addEventListener('change', schedule);
-    btnExport.addEventListener('click', () => {
-      if (!lastExportPayload) return;
-      for (const item of lastExportPayload) {
-        const blob = new Blob([JSON.stringify(item.content, null, 2)], { type: 'application/json;charset=utf-8' });
-        const a = document.createElement('a');
-        a.download = item.file;
-        a.href = URL.createObjectURL(blob);
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }
-    });
-
     render();
   </script>
 </body>
