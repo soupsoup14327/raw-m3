@@ -105,21 +105,6 @@
       };
     };
 
-    const swatchBlock = (title, samples) => {
-      const root = document.createElement('div');
-      root.innerHTML = `<div class="palette-title">${title}</div>`;
-      const row = document.createElement('div');
-      row.className = 'swatches';
-      for (const { tone, hex, name } of samples) {
-        const node = document.createElement('div');
-        node.className = 'sw';
-        node.innerHTML = `<div class="sw-chip" style="background:${hex}"></div><div class="sw-tone">${tone}</div><div class="sw-hex" title="Нажми, чтобы скопировать">${hex}</div><div class="sw-name">${name || ''}</div>`;
-        row.appendChild(node);
-      }
-      root.appendChild(row);
-      return root;
-    };
-
     function makeCleanPaletteJson(paletteName, samples) {
       return {
         palette: paletteName,
