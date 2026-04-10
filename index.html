@@ -39,7 +39,7 @@
 <body>
   <div class="wrap">
     <h1>RAW color pallete</h1>
-    <p class="sub">Генерация тона от 0 до 100</p>
+    <p class="sub">Генерация тона 0–100: OKLCH + якорь seed, шаги по степени (Stevens‑подобно).</p>
     <div class="panel">
       <div class="row">
         <div>
@@ -68,7 +68,8 @@
   </div>
 
   <script type="module">
-    import { CorePalette, TonalPalette, Hct, argbFromHex, hexFromArgb } from "https://esm.sh/@material/material-color-utilities@0.4.0";
+    import { CorePalette, Hct, argbFromHex, hexFromArgb } from "https://esm.sh/@material/material-color-utilities@0.4.0";
+    import { interpolate, formatHex, parse } from "https://esm.sh/culori@4.0.1";
 
     const pick = document.getElementById('pick');
     const hexInput = document.getElementById('hex');
@@ -96,50 +97,52 @@
     };
 
     const tonesFromPalette = (palette, steps) => steps.map((tone) => ({ tone, hex: hexFromArgb(palette.tone(tone)) }));
-    const smoothstep = (x) => x * x * (3 - 2 * x);
-    const toneChromaTarget = (hue, seedChroma, tone) => {
-      const t = Math.max(0, Math.min(100, tone));
-      const isYellow = hue >= 48 && hue <= 98;
-      const minC = isYellow ? 6 : 4;
-      const maxC = isYellow ? Math.min(84, Math.max(seedChroma, 52)) : Math.min(74, Math.max(seedChroma, 42));
-      if (t <= 50) {
-        const p = t / 50;
-        return minC + (maxC - minC) * smoothstep(p);
-      }
-      const p = (t - 50) / 50;
-      const endC = isYellow ? 2.5 : 1.5;
-      return maxC + (endC - maxC) * smoothstep(p);
-    };
 
-    function makeDistinctHex(hue, chroma, tone, prevHex) {
-      const attempts = [
-        [0, 0],
-        [0.8, 3],
-        [-0.8, 3],
-        [1.6, 5],
-        [-1.6, 5],
-        [2.4, 7],
-        [-2.4, 7],
-      ];
-      for (const [dh, dc] of attempts) {
-        const hct = Hct.from(hue + dh, Math.max(0, chroma + dc), tone);
-        const hex = hexFromArgb(hct.toInt());
-        if (!prevHex || hex !== prevHex) return hex;
-      }
-      return hexFromArgb(Hct.from(hue, Math.max(0, chroma), tone).toInt());
+    /** Степень меньше 1 — больше шагов в тенях (грубо по Stevens для сенсорных шкал). */
+    const STEVENS_GAMMA = 0.52;
+
+    function perceptualStep(t) {
+      const x = Math.max(0, Math.min(1, t));
+      return Math.pow(x, STEVENS_GAMMA);
     }
 
-    function tonesFromSeedSmooth(hex, steps) {
-      const seed = Hct.fromInt(argbFromHex(hex));
-      const hue = seed.hue;
-      const seedChroma = seed.chroma;
+    /**
+     * Чёрный → seed → белый в OKLCH (меньше «грязи», чем HCT по тону).
+     * Точный seed обязателен на индексе, соответствующем Hct.tone.
+     */
+    function tonesFromSeedOkAnchored(seedHex, stepTones) {
+      const n = stepTones.length;
+      if (n === 0) return [];
+      const seedUpper = seedHex.toUpperCase();
+      const seedParsed = parse(seedUpper);
+      const black = parse('#000000');
+      const white = parse('#ffffff');
+      const mixDark = interpolate([black, seedParsed], 'oklch');
+      const mixLight = interpolate([seedParsed, white], 'oklch');
+
+      const hct = Hct.fromInt(argbFromHex(seedUpper));
+      const anchorIdx = Math.round((hct.tone / 100) * (n - 1));
+
       const out = [];
-      let prevHex = null;
-      for (const tone of steps) {
-        const targetChroma = toneChromaTarget(hue, seedChroma, tone);
-        const colorHex = makeDistinctHex(hue, targetChroma, tone, prevHex);
-        out.push({ tone, hex: colorHex });
-        prevHex = colorHex;
+      for (let i = 0; i < n; i += 1) {
+        let color;
+        if (n === 1) {
+          color = seedParsed;
+        } else if (anchorIdx <= 0) {
+          color = mixLight(perceptualStep(i / (n - 1)));
+        } else if (anchorIdx >= n - 1) {
+          color = mixDark(perceptualStep(i / (n - 1)));
+        } else if (i < anchorIdx) {
+          color = mixDark(perceptualStep(i / anchorIdx));
+        } else if (i > anchorIdx) {
+          color = mixLight(perceptualStep((i - anchorIdx) / (n - 1 - anchorIdx)));
+        } else {
+          color = seedParsed;
+        }
+        let hex = formatHex(color);
+        if (typeof hex === 'string' && !hex.startsWith('#')) hex = `#${hex}`;
+        if (i === anchorIdx) hex = seedUpper;
+        out.push({ tone: stepTones[i], hex: hex.toUpperCase() });
       }
       return out;
     }
@@ -247,7 +250,7 @@
         const namesApi = await fetchGroupNames([hex]);
         const seedName = namesApi.get(hex.toUpperCase()) || 'Palette';
         if (mode === 'tonal') {
-          const tonal = tonesFromSeedSmooth(hex, steps);
+          const tonal = tonesFromSeedOkAnchored(hex, steps);
           const groupName = seedName;
           groupExports.set('tonal', { groupName, samples: tonal });
           preview.appendChild(swatchBlock('Color', 'tonal', tonal, groupName));
