@@ -61,7 +61,7 @@
           </select>
         </div>
       </div>
-      <p class="hint">JSON для Figma Tokens / Tokens Studio: <code>colors → имя группы → 1…N</code> (<code>value</code> + <code>type: color</code>).</p>
+      <p class="hint">JSON под <strong>Palette Importer</strong>: одна группа = имя цвета, внутри <code>&quot;1&quot;…&quot;N&quot;: &quot;#HEX&quot;</code> (как Tailwind), без <code>colors</code> и без <code>type</code>.</p>
       <div class="err" id="err" hidden></div>
     </div>
     <div id="preview"></div>
@@ -163,23 +163,17 @@
     };
 
     /**
-     * Формат как в Figma Tokens: вложенная группа + стили 1…N (не плоский массив).
-     * Импорт: Tokens Studio → Import → JSON (или плагин Figma Tokens).
+     * Palette Importer (Figma): только вложенные HEX-строки, как в доке плагина (Tailwind-подобно).
+     * Пример: { "red": { "50": "#ffebee" } } — у нас { "Lemon": { "1": "#FFF700", ... } }
+     * Не использовать colors / value / type — иначе 0 цветов в превью.
      */
-    function makeFigmaTokensJson(groupName, samples) {
+    function makePaletteImporterJson(groupName, samples) {
       const g = String(groupName || 'Palette').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim() || 'Palette';
       const inner = {};
       samples.forEach((s, idx) => {
-        inner[String(idx + 1)] = {
-          value: s.hex,
-          type: 'color',
-        };
+        inner[String(idx + 1)] = s.hex;
       });
-      return {
-        colors: {
-          [g]: inner,
-        },
-      };
+      return { [g]: inner };
     }
 
     async function fetchGroupNames(hexList) {
@@ -218,7 +212,7 @@
       const pack = groupExports.get(groupKey);
       if (!pack) return;
       const file = `${safeFileName(pack.groupName)}.json`;
-      const content = makeFigmaTokensJson(pack.groupName, pack.samples);
+      const content = makePaletteImporterJson(pack.groupName, pack.samples);
       downloadJson(file, content);
     }
 
