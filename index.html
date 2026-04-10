@@ -68,7 +68,7 @@
   </div>
 
   <script type="module">
-    import { CorePalette, TonalPalette, argbFromHex, hexFromArgb } from "https://esm.sh/@material/material-color-utilities@0.4.0";
+    import { CorePalette, TonalPalette, Hct, argbFromHex, hexFromArgb } from "https://esm.sh/@material/material-color-utilities@0.4.0";
 
     const pick = document.getElementById('pick');
     const hexInput = document.getElementById('hex');
@@ -96,6 +96,53 @@
     };
 
     const tonesFromPalette = (palette, steps) => steps.map((tone) => ({ tone, hex: hexFromArgb(palette.tone(tone)) }));
+    const smoothstep = (x) => x * x * (3 - 2 * x);
+    const toneChromaTarget = (hue, seedChroma, tone) => {
+      const t = Math.max(0, Math.min(100, tone));
+      const isYellow = hue >= 48 && hue <= 98;
+      const minC = isYellow ? 6 : 4;
+      const maxC = isYellow ? Math.min(84, Math.max(seedChroma, 52)) : Math.min(74, Math.max(seedChroma, 42));
+      if (t <= 50) {
+        const p = t / 50;
+        return minC + (maxC - minC) * smoothstep(p);
+      }
+      const p = (t - 50) / 50;
+      const endC = isYellow ? 2.5 : 1.5;
+      return maxC + (endC - maxC) * smoothstep(p);
+    };
+
+    function makeDistinctHex(hue, chroma, tone, prevHex) {
+      const attempts = [
+        [0, 0],
+        [0.8, 3],
+        [-0.8, 3],
+        [1.6, 5],
+        [-1.6, 5],
+        [2.4, 7],
+        [-2.4, 7],
+      ];
+      for (const [dh, dc] of attempts) {
+        const hct = Hct.from(hue + dh, Math.max(0, chroma + dc), tone);
+        const hex = hexFromArgb(hct.toInt());
+        if (!prevHex || hex !== prevHex) return hex;
+      }
+      return hexFromArgb(Hct.from(hue, Math.max(0, chroma), tone).toInt());
+    }
+
+    function tonesFromSeedSmooth(hex, steps) {
+      const seed = Hct.fromInt(argbFromHex(hex));
+      const hue = seed.hue;
+      const seedChroma = seed.chroma;
+      const out = [];
+      let prevHex = null;
+      for (const tone of steps) {
+        const targetChroma = toneChromaTarget(hue, seedChroma, tone);
+        const colorHex = makeDistinctHex(hue, targetChroma, tone, prevHex);
+        out.push({ tone, hex: colorHex });
+        prevHex = colorHex;
+      }
+      return out;
+    }
     const buildTheme = (hex, steps) => {
       const core = CorePalette.of(argbFromHex(hex));
       return {
@@ -200,7 +247,7 @@
         const namesApi = await fetchGroupNames([hex]);
         const seedName = namesApi.get(hex.toUpperCase()) || 'Palette';
         if (mode === 'tonal') {
-          const tonal = tonesFromPalette(TonalPalette.fromInt(argbFromHex(hex)), steps);
+          const tonal = tonesFromSeedSmooth(hex, steps);
           const groupName = seedName;
           groupExports.set('tonal', { groupName, samples: tonal });
           preview.appendChild(swatchBlock('Color', 'tonal', tonal, groupName));
